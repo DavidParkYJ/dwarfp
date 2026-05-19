@@ -1,0 +1,24 @@
+# Environments / editors / tooling
+.venv/
+.vscode/
+.claude/
+
+# Exploratory / superseded work — not part of paper verification
+archive/
+
+# Paper sources & build artifacts (not published in this repo)
+paper/
+*.aux
+*.log
+*.out
+*.pdf
+
+# Internal working notes
+EXPERIMENT_LOG.md
+METHODOLOGY.md
+research_plan.md
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
