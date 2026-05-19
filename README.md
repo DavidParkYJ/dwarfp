@@ -11,6 +11,10 @@ experimental pipeline used to evaluate it.
 > This repository contains only the code and datasets needed to **verify the
 > paper's empirical results**. The paper text itself is not included.
 
+**Naming.** The method is called *Path-based Adaptive Weighting* in the paper.
+In the code it appears as `CPFW` (Conditional Path-Flip Weighting) — these
+refer to the same method.
+
 ## Layout
 
 ```
@@ -26,7 +30,9 @@ dwarfp/                      method + experiment code
   fig_synthetic_2d.py        synthetic 2D visualisation      (Figure 1)
   eval_magnitude.py          effect-size helper
   download_datasets.py       (re)builds data_cache/ from UCI/OpenML
-data_cache/                  37 preprocessed benchmark datasets (.pkl, bundled)
+data_cache/                  preprocessed datasets (.pkl): the 30 used in the
+                             paper plus 7 extra bundled but excluded from the
+                             published evaluation (see dwarfp/common.py DATASETS)
 requirements.txt
 ```
 
