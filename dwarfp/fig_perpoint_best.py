@@ -163,21 +163,7 @@ def main():
                 ax.scatter(X[mask, 0], X[mask, 1],
                            c=PAT_COLORS[p], marker=markers[c],
                            s=18, alpha=0.6, edgecolors="white",
-                           linewidths=0.3, zorder=3)
-
-        # Decision boundary from full-data RF
-        rf = RandomForestClassifier(
-            n_estimators=N_ESTIMATORS, max_features="sqrt",
-            bootstrap=True, random_state=SEED).fit(X, y)
-        margin = 0.6
-        x_min, x_max = X[:, 0].min() - margin, X[:, 0].max() + margin
-        y_min, y_max = X[:, 1].min() - margin, X[:, 1].max() + margin
-        xx, yy = np.meshgrid(np.linspace(x_min, x_max, 200),
-                             np.linspace(y_min, y_max, 200))
-        proba = rf.predict_proba(np.c_[xx.ravel(), yy.ravel()])
-        conf = np.max(proba, axis=1).reshape(xx.shape)
-        ax.contour(xx, yy, conf, levels=[0.5], colors="k",
-                   linewidths=1.5, linestyles="--", zorder=4)
+                           linewidths=0.3, zorder=2)
 
         ax.set_title(name, fontsize=12, fontweight="bold")
         ax.set_xlabel("$x_1$")
@@ -192,10 +178,7 @@ def main():
                             markerfacecolor="gray", markersize=8,
                             label=f"Class {c}")
                      for c, m in enumerate(["o", "s"])]
-    boundary_handle = [Line2D([0], [0], color="k", ls="--", lw=1.5,
-                              label="Decision boundary")]
-
-    fig.legend(handles=pat_handles + class_handles + boundary_handle,
+    fig.legend(handles=pat_handles + class_handles,
                loc="lower center", ncol=5, fontsize=9,
                title="Best pattern in (region, predicted class) cell",
                title_fontsize=10, framealpha=0.95,

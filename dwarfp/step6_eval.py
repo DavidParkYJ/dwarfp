@@ -24,6 +24,7 @@ Eval contract:
   Secondary: minority recall and majority recall must not regress vs RF
 """
 
+import csv
 import sys
 import warnings
 from pathlib import Path
@@ -38,7 +39,7 @@ from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, str(Path(PROJECT_ROOT) / "archive"))
-from dwarfp.common import load, recalls, classify_pattern, walk_tree, DATASETS
+from dwarfp.common import load, recalls, precompute_leaf_patterns, DATASETS
 
 # deslib compat patch (deslib 0.3.7 + sklearn >=1.6)
 from deslib.base import BaseDS
@@ -61,8 +62,8 @@ N_CLS = 2
 
 
 def _bucket_fp(fp):
-    """10 buckets: [.5,.55)[.55,.6)...[.95,1.]  -> 0..9"""
-    return min(9, int((fp - 0.5) / 0.05))
+    """10 buckets: [.5,.55)[.55,.6)...[.95,1.]  -> 0..9.  Scalar or array."""
+    return np.minimum(9, ((np.asarray(fp) - 0.5) / 0.05).astype(int))
 
 
 def _collect_table(X_tr, y_tr, minority, seed):
@@ -75,16 +76,26 @@ def _collect_table(X_tr, y_tr, minority, seed):
                                     random_state=seed, n_jobs=1
                                     ).fit(X_tr[tr_idx], y_tr[tr_idx])
         classes = rf.classes_
-        forest_proba = rf.predict_proba(X_tr[val_idx])
+        X_val, y_val = X_tr[val_idx], y_tr[val_idx]
+        n_val = len(val_idx)
+        forest_proba = rf.predict_proba(X_val)
+
         for est in rf.estimators_:
-            for j, (labels, lv) in enumerate(walk_tree(est, X_tr[val_idx])):
-                pred = classes[int(np.argmax(lv))]
-                c = 1.0 if pred == y_tr[val_idx[j]] else 0.0
-                ci = 1 if int(pred) == minority else 0
-                pred_idx = np.searchsorted(classes, pred)
-                fp = float(forest_proba[j, pred_idx])
-                R[_bucket_fp(fp), classify_pattern(labels), ci, 0] += c
-                R[_bucket_fp(fp), classify_pattern(labels), ci, 1] += 1
+            leaf_pat = precompute_leaf_patterns(est)
+            leaf_ids = est.apply(X_val)
+            t = est.tree_
+            lv_mat = t.value[leaf_ids, 0, :]
+            pred_idx = np.argmax(lv_mat, axis=1)
+            pred_cls = classes[pred_idx]
+
+            fp  = forest_proba[np.arange(n_val), pred_idx]
+            pb  = _bucket_fp(fp)
+            pat = leaf_pat[leaf_ids]
+            ci  = (pred_cls == minority).astype(int)
+            cor = (pred_cls == y_val).astype(np.float64)
+
+            np.add.at(R[:, :, :, 0], (pb, pat, ci), cor)
+            np.add.at(R[:, :, :, 1], (pb, pat, ci), 1.0)
     return R
 
 
@@ -106,36 +117,31 @@ def _weighted_predict(rf, Xte, minority, W):
     """Apply weight table to produce weighted probability estimates."""
     classes = rf.classes_
     n_cls = len(classes)
-    out = np.zeros((len(Xte), n_cls))
+    n_te = len(Xte)
+    psum = np.zeros((n_te, n_cls))
+    wsum = np.zeros(n_te)
     forest_proba = rf.predict_proba(Xte)
 
-    tree_data = []
     for est in rf.estimators_:
+        leaf_pat = precompute_leaf_patterns(est)
+        leaf_ids = est.apply(Xte)
         t = est.tree_
-        tree_data.append((t.children_left, t.children_right,
-                          np.argmax(t.value[:, 0, :], axis=1),
-                          t.feature, t.threshold, t.value))
+        lv_mat = t.value[leaf_ids, 0, :]
+        lv_norm = lv_mat / lv_mat.sum(axis=1, keepdims=True)
+        pred_idx = np.argmax(lv_mat, axis=1)
+        pred_cls = classes[pred_idx]
 
-    for i in range(len(Xte)):
-        xi = Xte[i]
-        psum = np.zeros(n_cls)
-        wsum = 0.0
-        for (cl, cr, nlab, feat, thr, val) in tree_data:
-            node = 0
-            labels = [int(nlab[node])]
-            while cl[node] != cr[node]:
-                node = cl[node] if xi[feat[node]] <= thr[node] else cr[node]
-                labels.append(int(nlab[node]))
-            lv = val[node, 0, :]
-            pred = classes[int(np.argmax(lv))]
-            ci = 1 if int(pred) == minority else 0
-            pred_idx = np.searchsorted(classes, pred)
-            fp = float(forest_proba[i, pred_idx])
-            w = float(W[_bucket_fp(fp), classify_pattern(labels), ci])
-            psum += w * (lv / lv.sum())
-            wsum += w
-        out[i] = psum / wsum if wsum > 0 else np.ones(n_cls) / n_cls
-    return out
+        fp = forest_proba[np.arange(n_te), pred_idx]
+        pb = _bucket_fp(fp)
+        pat = leaf_pat[leaf_ids]
+        ci = (pred_cls == minority).astype(int)
+
+        w = W[pb, pat, ci]
+        psum += w[:, np.newaxis] * lv_norm
+        wsum += w
+
+    safe = np.where(wsum > 0, wsum, 1.0)
+    return psum / safe[:, np.newaxis]
 
 
 # ── WRF (Winham 2013) ───────────────────────────────────────────────
@@ -351,6 +357,23 @@ def run(datasets=None):
           f'wins={int((small>1e-9).sum())}/{len(small)}')
     print(f'large (n> {int(med_n)}): mean_d={large.mean():+.4f}  '
           f'wins={int((large>1e-9).sum())}/{len(large)}')
+
+    # ── Save CSV ──────────────────────────────────────────────────────
+    out_path = Path(__file__).resolve().parent / "results_step6.csv"
+    with open(out_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["dataset", "n"] +
+                   [f"{LABELS[m]}_{metric}"
+                    for m in METHODS for metric in ["acc", "rmin", "rmaj"]])
+        for i, name in enumerate(datasets):
+            X, _ = load(name)
+            row = [name, len(X)]
+            for m in METHODS:
+                row.extend([all_res[m]["acc"][i],
+                            all_res[m]["rmin"][i],
+                            all_res[m]["rmaj"][i]])
+            w.writerow(row)
+    print(f"\nSaved: {out_path}")
 
 
 if __name__ == "__main__":

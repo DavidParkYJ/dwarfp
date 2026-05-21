@@ -1,8 +1,7 @@
 """step7_tree_sweep.py — CPFW d_acc stability across N_ESTIMATORS.
 
-Optimisation: pre-computes leaf patterns per tree (DFS once), then uses
-est.apply(X) for leaf lookup + array indexing. Avoids decision_path(),
-padded matrix construction, and batch pattern classification per sample.
+Uses the same vectorized leaf-pattern implementation as step6_eval:
+precompute_leaf_patterns + est.apply() for O(1) pattern lookup.
 
 Tree counts: [100, 150, 300, 500, 1000]
 """
@@ -18,7 +17,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, str(Path(PROJECT_ROOT) / "archive"))
 from dwarfp.common import load, DATASETS, precompute_leaf_patterns
 
 warnings.filterwarnings("ignore")
@@ -34,8 +35,8 @@ N_PAT = 6
 N_CLS = 2
 
 
-def _bucket_fp(fp_arr):
-    return np.minimum(9, ((fp_arr - 0.5) / 0.05).astype(int))
+def _bucket_fp(fp):
+    return np.minimum(9, ((np.asarray(fp) - 0.5) / 0.05).astype(int))
 
 
 def _collect_table(X_tr, y_tr, minority, seed, n_est):
@@ -52,12 +53,12 @@ def _collect_table(X_tr, y_tr, minority, seed, n_est):
         forest_proba = rf.predict_proba(X_val)
 
         for est in rf.estimators_:
-            leaf_pat = precompute_leaf_patterns(est)    # O(n_leaves), once
-            leaf_ids = est.apply(X_val)                 # C code, (n_val,)
+            leaf_pat = precompute_leaf_patterns(est)
+            leaf_ids = est.apply(X_val)
             t = est.tree_
 
-            pat      = leaf_pat[leaf_ids]               # array indexing
-            lv_mat   = t.value[leaf_ids, 0, :]          # (n_val, n_cls)
+            pat      = leaf_pat[leaf_ids]
+            lv_mat   = t.value[leaf_ids, 0, :]
             pred_idx = np.argmax(lv_mat, axis=1)
             pred_cls = classes[pred_idx]
 
@@ -126,14 +127,15 @@ def _run_one(name, rep, n_est):
     (tr, te), = sss.split(X, y)
     Xtr, Xte, ytr, yte = X[tr], X[te], y[tr], y[te]
 
-    R  = _collect_table(Xtr, ytr, minority, SEED + rep, n_est)
-    W  = _build_weight_table(R)
     rf = RandomForestClassifier(n_estimators=n_est, max_features="sqrt",
                                 bootstrap=True, random_state=SEED + rep,
                                 n_jobs=1).fit(Xtr, ytr)
 
     rf_acc = float(accuracy_score(yte, rf.predict(Xte)))
-    wp     = _weighted_predict(rf, Xte, minority, W)
+
+    R  = _collect_table(Xtr, ytr, minority, SEED + rep, n_est)
+    W  = _build_weight_table(R)
+    wp = _weighted_predict(rf, Xte, minority, W)
     fw_acc = float(accuracy_score(yte, rf.classes_[np.argmax(wp, axis=1)]))
     return rf_acc, fw_acc
 
@@ -141,15 +143,13 @@ def _run_one(name, rep, n_est):
 def run():
     datasets = DATASETS
     n_ds = len(datasets)
-    all_d  = np.zeros((len(TREE_COUNTS), n_ds))
-    all_rf = np.zeros((len(TREE_COUNTS), n_ds))
 
     hdr = f"{'trees':>6}  {'RF_acc':>7}  {'FW_acc':>7}  {'d_acc':>8}  {'wins':>5}  {'p':>7}"
     print(f"Tree sweep: {TREE_COUNTS}  repeats={REPEATS}  datasets={n_ds}\n")
     print(hdr)
     print("-" * len(hdr))
 
-    for i, n_est in enumerate(TREE_COUNTS):
+    for n_est in TREE_COUNTS:
         print(f"  running n_estimators={n_est}...", flush=True)
         rf_accs, fw_accs = [], []
         for name in datasets:
@@ -161,8 +161,6 @@ def run():
         rf_accs = np.array(rf_accs)
         fw_accs = np.array(fw_accs)
         d = fw_accs - rf_accs
-        all_d[i]  = d
-        all_rf[i] = rf_accs
         wins = int((d > 1e-9).sum())
         try:
             p = wilcoxon(fw_accs, rf_accs).pvalue
@@ -170,29 +168,6 @@ def run():
             p = float("nan")
         print(f"{n_est:>6}  {rf_accs.mean():7.4f}  {fw_accs.mean():7.4f}  "
               f"{d.mean():+8.4f}  {wins:>3}/{n_ds}  {p:7.4f}", flush=True)
-
-    print("\n== Per-dataset d_acc trend ==")
-    print(f"{'dataset':16s}", end="")
-    for n in TREE_COUNTS:
-        print(f"  {n:>5}", end="")
-    print(f"  {'trend':>6}")
-    print("-" * (16 + 8 * len(TREE_COUNTS) + 8))
-
-    trends = []
-    for j, name in enumerate(datasets):
-        row = all_d[:, j]
-        slope = np.polyfit(np.log(TREE_COUNTS), row, 1)[0]
-        trend = "grow" if slope > 5e-5 else ("shrink" if slope < -5e-5 else "stable")
-        trends.append(trend)
-        print(f"{name:16s}", end="")
-        for v in row:
-            print(f"  {v:+.4f}", end="")
-        print(f"  {trend:>6}")
-
-    from collections import Counter
-    c = Counter(trends)
-    print(f"\nTrend summary: grow={c['grow']}  stable={c['stable']}  shrink={c['shrink']}")
-    print(f"RF acc gain (150→1000): {all_rf[-1].mean() - all_rf[1].mean():+.4f}")
 
 
 if __name__ == "__main__":
