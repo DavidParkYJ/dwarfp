@@ -63,7 +63,7 @@ def _fp_share_one(name, rep):
 def run():
     print(f"datasets={len(DATASETS)}  repeats={REPEATS}  n_estimators={N_ESTIMATORS}")
     print("sample-level OOB forest probability (rf.oob_decision_function_)\n")
-    cb = {r["dataset"]: float(r["CPFW_acc"]) - float(r["RF_acc"])
+    cb = {r["dataset"]: float(r["d_CPFW_acc"])
           for r in csv.DictReader(open(
               Path(__file__).resolve().parent / "results_baselines.csv"))}
 

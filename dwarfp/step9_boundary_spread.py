@@ -102,7 +102,7 @@ def run():
     print(f"datasets={len(DATASETS)}  repeats={REPEATS}  n_estimators={N_ESTIMATORS}")
     print("sample-level OOB region: forest_proba.max ∈ [.4,.6)")
     print(f"class: per-(tree, sample) predicted class; cell min_n={MIN_N_CELL}\n")
-    cb = {r["dataset"]: float(r["CPFW_acc"]) - float(r["RF_acc"])
+    cb = {r["dataset"]: float(r["d_CPFW_acc"])
           for r in csv.DictReader(open(
               Path(__file__).resolve().parent / "results_baselines.csv"))}
 

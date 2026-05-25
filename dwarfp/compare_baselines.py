@@ -210,11 +210,21 @@ def run(datasets=None):
         print(row)
 
     # ── Persist per-dataset acc/rmin/rmaj ──────────────────────────────
+    # In addition to the 4-decimal-rounded acc/rmin/rmaj per method, we
+    # store full-precision differences (vs RF) rounded to 4 decimals.
+    # This avoids precision loss that would otherwise occur if a reader
+    # subtracted the 4-decimal columns directly.
     import csv as _csv
     out_path = Path(__file__).resolve().parent / "results_baselines.csv"
     fieldnames = ["dataset", "n"]
     for m in METHODS:
         fieldnames += [f"{LABELS[m]}_acc", f"{LABELS[m]}_rmin", f"{LABELS[m]}_rmaj"]
+    for m in METHODS:
+        if m == "rf":
+            continue
+        fieldnames += [f"d_{LABELS[m]}_acc",
+                       f"d_{LABELS[m]}_rmin",
+                       f"d_{LABELS[m]}_rmaj"]
     with open(out_path, "w", newline="") as fcsv:
         w = _csv.DictWriter(fcsv, fieldnames=fieldnames)
         w.writeheader()
@@ -225,6 +235,15 @@ def run(datasets=None):
                 row[f"{LABELS[m]}_acc"]  = f"{all_res[m]['acc'][i]:.4f}"
                 row[f"{LABELS[m]}_rmin"] = f"{all_res[m]['rmin'][i]:.4f}"
                 row[f"{LABELS[m]}_rmaj"] = f"{all_res[m]['rmaj'][i]:.4f}"
+            for m in METHODS:
+                if m == "rf":
+                    continue
+                d_acc  = all_res[m]['acc'][i]  - all_res['rf']['acc'][i]
+                d_rmin = all_res[m]['rmin'][i] - all_res['rf']['rmin'][i]
+                d_rmaj = all_res[m]['rmaj'][i] - all_res['rf']['rmaj'][i]
+                row[f"d_{LABELS[m]}_acc"]  = f"{d_acc:+.4f}"
+                row[f"d_{LABELS[m]}_rmin"] = f"{d_rmin:+.4f}"
+                row[f"d_{LABELS[m]}_rmaj"] = f"{d_rmaj:+.4f}"
             w.writerow(row)
     print(f"\nSaved: {out_path}")
 
