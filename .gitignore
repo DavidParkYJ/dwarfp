@@ -8,6 +8,7 @@ archive/
 dwarfp/exp_*.py
 dwarfp/explore_*.py
 dwarfp/check_*.py
+dwarfp/results_S_*.csv
 dwarfp/results_amp_*.csv
 dwarfp/results_bestpattern.csv
 dwarfp/results_boot_*.csv
