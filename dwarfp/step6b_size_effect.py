@@ -11,99 +11,26 @@ from pathlib import Path
 
 import numpy as np
 from joblib import Parallel, delayed
+from scipy.stats import wilcoxon
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedShuffleSplit
 
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, str(Path(PROJECT_ROOT) / "archive"))
-from dwarfp.common import (load, recalls, precompute_leaf_patterns,
-                            DATASETS)
+from dwarfp.common import (load, recalls, DATASETS,
+                            cpfw_collect_table, cpfw_build_weight_table,
+                            cpfw_predict_proba)
 
 warnings.filterwarnings("ignore")
 
-N_ESTIMATORS = 150
+N_ESTIMATORS = 300
 REPEATS = 30
 TEST_SIZE = 0.3
 SEED = 42
 N_CV = 5
 MIN_N = 30
-N_PROB = 10
-N_PAT = 6
-N_CLS = 2
-
-
-def _bucket_fp(fp):
-    return np.minimum(9, ((np.asarray(fp) - 0.5) / 0.05).astype(int))
-
-
-def _collect_table(X_tr, y_tr, minority, seed):
-    skf = StratifiedKFold(n_splits=N_CV, shuffle=True, random_state=seed)
-    R = np.zeros((N_PROB, N_PAT, N_CLS, 2))
-    for tr_idx, val_idx in skf.split(X_tr, y_tr):
-        rf = RandomForestClassifier(n_estimators=N_ESTIMATORS,
-                                    max_features="sqrt", bootstrap=True,
-                                    random_state=seed, n_jobs=1
-                                    ).fit(X_tr[tr_idx], y_tr[tr_idx])
-        classes = rf.classes_
-        X_val, y_val = X_tr[val_idx], y_tr[val_idx]
-        n_val = len(val_idx)
-        forest_proba = rf.predict_proba(X_val)
-        for est in rf.estimators_:
-            leaf_pat = precompute_leaf_patterns(est)
-            leaf_ids = est.apply(X_val)
-            t = est.tree_
-            lv_mat = t.value[leaf_ids, 0, :]
-            pred_idx = np.argmax(lv_mat, axis=1)
-            pred_cls = classes[pred_idx]
-            fp  = forest_proba[np.arange(n_val), pred_idx]
-            pb  = _bucket_fp(fp)
-            pat = leaf_pat[leaf_ids]
-            ci  = (pred_cls == minority).astype(int)
-            cor = (pred_cls == y_val).astype(np.float64)
-            np.add.at(R[:, :, :, 0], (pb, pat, ci), cor)
-            np.add.at(R[:, :, :, 1], (pb, pat, ci), 1.0)
-    return R
-
-
-def _build_weight_table(R):
-    W = np.ones((N_PROB, N_PAT, N_CLS))
-    for pb in range(N_PROB):
-        for ci in range(N_CLS):
-            marg = R[pb, :, ci, :].sum(axis=0)
-            p_marg = marg[0] / marg[1] if marg[1] >= MIN_N else None
-            for pat in range(N_PAT):
-                v = R[pb, pat, ci]
-                if v[1] >= MIN_N and p_marg and p_marg > 0:
-                    W[pb, pat, ci] = (v[0] / v[1]) / p_marg
-    return W
-
-
-def _weighted_predict(rf, Xte, minority, W):
-    classes = rf.classes_
-    n_cls = len(classes)
-    n_te = len(Xte)
-    psum = np.zeros((n_te, n_cls))
-    wsum = np.zeros(n_te)
-    forest_proba = rf.predict_proba(Xte)
-    for est in rf.estimators_:
-        leaf_pat = precompute_leaf_patterns(est)
-        leaf_ids = est.apply(Xte)
-        t = est.tree_
-        lv_mat = t.value[leaf_ids, 0, :]
-        lv_norm = lv_mat / lv_mat.sum(axis=1, keepdims=True)
-        pred_idx = np.argmax(lv_mat, axis=1)
-        pred_cls = classes[pred_idx]
-        fp = forest_proba[np.arange(n_te), pred_idx]
-        pb = _bucket_fp(fp)
-        pat = leaf_pat[leaf_ids]
-        ci = (pred_cls == minority).astype(int)
-        w = W[pb, pat, ci]
-        psum += w[:, np.newaxis] * lv_norm
-        wsum += w
-    safe = np.where(wsum > 0, wsum, 1.0)
-    return psum / safe[:, np.newaxis]
 
 
 def _run_one(name, rep):
@@ -122,9 +49,10 @@ def _run_one(name, rep):
     rf_acc = float(accuracy_score(yte, rf_pred))
     rf_rmin, rf_rmaj = recalls(yte, rf_pred, minority, majority)
 
-    R = _collect_table(Xtr, ytr, minority, SEED + rep)
-    W = _build_weight_table(R)
-    wp = _weighted_predict(rf, Xte, minority, W)
+    R = cpfw_collect_table(Xtr, ytr, minority, SEED + rep,
+                           n_estimators=N_ESTIMATORS, n_cv=N_CV)
+    W = cpfw_build_weight_table(R, min_n=MIN_N)
+    wp = cpfw_predict_proba(rf, Xte, minority, W)
     cpfw_pred = rf.classes_[np.argmax(wp, axis=1)]
     cpfw_acc = float(accuracy_score(yte, cpfw_pred))
     cpfw_rmin, cpfw_rmaj = recalls(yte, cpfw_pred, minority, majority)
@@ -135,6 +63,9 @@ def run():
     print(f"repeats={REPEATS}  n_estimators={N_ESTIMATORS}\n")
 
     rows = []
+    rf_a, cp_a = [], []
+    rf_rmi, cp_rmi = [], []
+    rf_rma, cp_rma = [], []
     for name in DATASETS:
         print(f"  {name}...", end="", flush=True)
         res = Parallel(n_jobs=-1, prefer="processes")(
@@ -143,17 +74,25 @@ def run():
         n = len(X)
         rf_acc  = float(np.mean([r[0] for r in res]))
         rf_rmin = float(np.mean([r[1] for r in res]))
+        rf_rmaj = float(np.mean([r[2] for r in res]))
         cpfw_acc  = float(np.mean([r[3] for r in res]))
         cpfw_rmin = float(np.mean([r[4] for r in res]))
-        d_acc = cpfw_acc - rf_acc
+        cpfw_rmaj = float(np.mean([r[5] for r in res]))
+        d_acc  = cpfw_acc - rf_acc
         d_rmin = cpfw_rmin - rf_rmin
+        d_rmaj = cpfw_rmaj - rf_rmaj
         print(f"  d_acc={d_acc:+.4f}")
+        rf_a.append(rf_acc); cp_a.append(cpfw_acc)
+        rf_rmi.append(rf_rmin); cp_rmi.append(cpfw_rmin)
+        rf_rma.append(rf_rmaj); cp_rma.append(cpfw_rmaj)
         rows.append({
             "dataset": name, "n": n,
             "rf_acc": f"{rf_acc:.4f}", "cpfw_acc": f"{cpfw_acc:.4f}",
             "d_acc": f"{d_acc:+.4f}",
             "rf_rmin": f"{rf_rmin:.4f}", "cpfw_rmin": f"{cpfw_rmin:.4f}",
             "d_rmin": f"{d_rmin:+.4f}",
+            "rf_rmaj": f"{rf_rmaj:.4f}", "cpfw_rmaj": f"{cpfw_rmaj:.4f}",
+            "d_rmaj": f"{d_rmaj:+.4f}",
         })
 
     out_path = Path(__file__).resolve().parent / "results_size_effect.csv"
@@ -163,9 +102,23 @@ def run():
         w.writerows(rows)
     print(f"\nSaved: {out_path}")
 
-    # Summary
+    # ── Aggregate vs RF ──────────────────────────────────────────────
+    d      = np.array(cp_a) - np.array(rf_a)
+    drmin  = np.array(cp_rmi) - np.array(rf_rmi)
+    drmaj  = np.array(cp_rma) - np.array(rf_rma)
+    W = int((d > 1e-9).sum())
+    L = int((d < -1e-9).sum())
+    p = wilcoxon(np.array(cp_a), np.array(rf_a)).pvalue
+    print(f"\n=== CPFW vs RF (aggregate, {len(DATASETS)} datasets) ===")
+    print(f"  d_acc  mean={d.mean():+.4f}  W={W} T={len(DATASETS)-W-L} L={L}  "
+          f"Wilcoxon p={p:.4f}")
+    print(f"  d_rmin mean={drmin.mean():+.4f}  "
+          f"worse(>0.2pp)={int((drmin < -0.002).sum())}/{len(DATASETS)}")
+    print(f"  d_rmaj mean={drmaj.mean():+.4f}  "
+          f"worse(>0.2pp)={int((drmaj < -0.002).sum())}/{len(DATASETS)}")
+
+    # ── Size effect ──────────────────────────────────────────────────
     ns = np.array([int(r["n"]) for r in rows])
-    d = np.array([float(r["d_acc"]) for r in rows])
     med = np.median(ns)
     small = d[ns <= med]
     large = d[ns > med]

@@ -19,11 +19,12 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedShuffleSplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from dwarfp.common import load, classify_pattern, walk_tree, PATTERNS, N_PAT, DATASETS
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "archive"))  # leaf_aware_rf
+from dwarfp.common import load, walk_tree_batch, PATTERNS, N_PAT, DATASETS
 
 warnings.filterwarnings("ignore")
 
-N_ESTIMATORS = 150
+N_ESTIMATORS = 300
 REPEATS = 5
 TEST_SIZE = 0.3
 SEED = 42
@@ -38,15 +39,13 @@ def _accumulate(name, rep):
     rf = RandomForestClassifier(n_estimators=N_ESTIMATORS, max_features="sqrt",
                                 bootstrap=True, random_state=SEED + rep,
                                 n_jobs=1).fit(Xtr, ytr)
-    classes = rf.classes_
     # R[pat, {sumc, n}]
     R = np.zeros((N_PAT, 2))
     for est in rf.estimators_:
-        for (labels, lv), yi in zip(walk_tree(est, Xte), yte):
-            pred = classes[int(np.argmax(lv))]
-            c = 1.0 if pred == yi else 0.0
-            R[classify_pattern(labels), 0] += c
-            R[classify_pattern(labels), 1] += 1
+        _, leaf_pat, _, pred_cls = walk_tree_batch(est, Xte)
+        cor = (pred_cls == yte).astype(np.float64)
+        np.add.at(R[:, 0], leaf_pat, cor)
+        np.add.at(R[:, 1], leaf_pat, 1.0)
     return R
 
 
@@ -60,7 +59,7 @@ def run():
 
     R_global = sum(results)
 
-    print("\n=== Raw pattern accuracy (pooled across 30 datasets) ===\n")
+    print(f"\n=== Raw pattern accuracy (pooled across {len(DATASETS)} datasets) ===\n")
     print(f'{"pattern":10s}  {"acc":>7}  {"n":>12}  {"rel_to_mean":>12}')
     print("-" * 50)
 

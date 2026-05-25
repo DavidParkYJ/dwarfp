@@ -28,7 +28,7 @@ from dwarfp.common import load, recalls, classify_pattern, DATASETS
 
 warnings.filterwarnings("ignore")
 
-N_ESTIMATORS = 150
+N_ESTIMATORS = 300
 REPEATS = 20
 TEST_SIZE = 0.3
 SEED = 42

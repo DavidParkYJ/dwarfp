@@ -1,0 +1,165 @@
+"""step9_boundary_spread.py — Per-dataset boundary pattern-accuracy spread.
+
+For each of the 36 datasets, restrict to tree×sample pairs with per-tree
+forest probability fp_t(x) ∈ [0.4, 0.6) (the boundary region of §5), then
+within each (predicted-class) subgroup compute the spread (max - min)
+of pattern accuracies across the 6 flip patterns. A high spread means
+boundary trees still carry pattern-conditional reliability signal; a
+low spread (collapsed to ~0) means the boundary is noise-dominated.
+
+Produces the boundary spread `S` column of Appendix B.4. Outputs
+results_boundary_spread.csv. Correlate per-dataset S against Proposed
+vs RF Δacc (Pearson r, Spearman ρ); the product M·S explains most of
+the per-dataset variance in gain (§6.5).
+"""
+
+import csv
+import sys
+from pathlib import Path
+
+import numpy as np
+from joblib import Parallel, delayed
+from scipy.stats import pearsonr, spearmanr
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import StratifiedShuffleSplit
+
+PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, str(Path(PROJECT_ROOT) / "archive"))
+from dwarfp.common import load, walk_tree_batch, N_PAT, DATASETS
+
+N_ESTIMATORS = 300
+TEST_SIZE = 0.3
+REPEATS = 30
+SEED = 42
+MIN_N = 30                        # min count per (class, pattern) cell
+
+
+def _accumulate(name, rep):
+    """Return R[ci, pat, {sumc, n}] aggregated over all trees × test
+    samples whose per-tree fp falls in [0.4, 0.6)."""
+    X, y = load(name)
+    cls, cnt = np.unique(y, return_counts=True)
+    minority = int(cls[np.argmin(cnt)])
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=TEST_SIZE,
+                                 random_state=SEED + rep)
+    (tr, te), = sss.split(X, y)
+    Xtr, Xte, ytr, yte = X[tr], X[te], y[tr], y[te]
+    rf = RandomForestClassifier(n_estimators=N_ESTIMATORS, max_features="sqrt",
+                                bootstrap=True, random_state=SEED + rep,
+                                n_jobs=1).fit(Xtr, ytr)
+    n_te = len(Xte)
+    forest_proba = rf.predict_proba(Xte)
+    R = np.zeros((2, N_PAT, 2))               # [ci, pat, {sumc, n}]
+    for est in rf.estimators_:
+        _, leaf_pat, leaf_val, pred_cls = walk_tree_batch(est, Xte)
+        pred_idx = np.argmax(leaf_val, axis=1)
+        fp = forest_proba[np.arange(n_te), pred_idx]
+        mask = (fp >= 0.4) & (fp < 0.6)
+        if not mask.any():
+            continue
+        pat = leaf_pat[mask]
+        ci = (pred_cls[mask] == minority).astype(int)
+        cor = (pred_cls[mask] == yte[mask]).astype(np.float64)
+        np.add.at(R[:, :, 0], (ci, pat), cor)
+        np.add.at(R[:, :, 1], (ci, pat), 1.0)
+    return R
+
+
+def _spread_per_class(R_pooled, ci):
+    """max - min of pattern accuracy in tree-class ci. NaN if too few cells."""
+    accs = []
+    for pat in range(N_PAT):
+        v = R_pooled[ci, pat]
+        if v[1] >= MIN_N:
+            accs.append(v[0] / v[1])
+    if len(accs) < 2:
+        return float("nan"), len(accs)
+    return float(max(accs) - min(accs)), len(accs)
+
+
+def run():
+    print(f"datasets={len(DATASETS)}  repeats={REPEATS}  n_estimators={N_ESTIMATORS}")
+    print(f"boundary region = fp[.4,.6),  min_n per cell = {MIN_N}\n")
+    # Δacc from compare_baselines CSV (shared-forest pipeline)
+    cb = {r["dataset"]: float(r["CPFW_acc"]) - float(r["RF_acc"])
+          for r in csv.DictReader(open(
+              Path(__file__).resolve().parent / "results_baselines.csv"))}
+
+    header = (f"{'dataset':22s} "
+              f"{'maj_spread':>10}  {'maj_pats':>8}  "
+              f"{'min_spread':>10}  {'min_pats':>8}  "
+              f"{'avg_spread':>10}  {'Δacc':>8}")
+    print(header)
+    print("-" * len(header))
+
+    rows = []
+    for name in DATASETS:
+        R_list = Parallel(n_jobs=-1, prefer="processes")(
+            delayed(_accumulate)(name, rep) for rep in range(REPEATS))
+        R_pooled = sum(R_list)
+        maj_spread, maj_nc = _spread_per_class(R_pooled, 0)
+        min_spread, min_nc = _spread_per_class(R_pooled, 1)
+        # average of available
+        vals = [v for v in (maj_spread, min_spread) if not np.isnan(v)]
+        avg_spread = float(np.mean(vals)) if vals else float("nan")
+        d_acc = cb.get(name, float("nan"))
+        rows.append({
+            "dataset": name,
+            "maj_spread": maj_spread, "maj_pats": maj_nc,
+            "min_spread": min_spread, "min_pats": min_nc,
+            "avg_spread": avg_spread, "d_acc": d_acc,
+        })
+        ms_s = f"{maj_spread:>10.4f}" if not np.isnan(maj_spread) else f"{'--':>10}"
+        mn_s = f"{min_spread:>10.4f}" if not np.isnan(min_spread) else f"{'--':>10}"
+        av_s = f"{avg_spread:>10.4f}" if not np.isnan(avg_spread) else f"{'--':>10}"
+        print(f"{name:22s} {ms_s}  {maj_nc:>8d}  {mn_s}  {min_nc:>8d}  "
+              f"{av_s}  {d_acc:+8.4f}")
+
+    # Save CSV
+    out_path = Path(__file__).resolve().parent / "results_boundary_spread.csv"
+    with open(out_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["dataset", "maj_spread", "maj_n_patterns",
+                    "min_spread", "min_n_patterns", "avg_spread", "d_acc"])
+        for r in rows:
+            w.writerow([r["dataset"],
+                        f"{r['maj_spread']:.4f}" if not np.isnan(r['maj_spread']) else "",
+                        r["maj_pats"],
+                        f"{r['min_spread']:.4f}" if not np.isnan(r['min_spread']) else "",
+                        r["min_pats"],
+                        f"{r['avg_spread']:.4f}" if not np.isnan(r['avg_spread']) else "",
+                        f"{r['d_acc']:+.4f}"])
+    print(f"\nSaved: {out_path}\n")
+
+    # Correlations
+    def _corr(key):
+        x = np.array([r[key] for r in rows])
+        y = np.array([r["d_acc"] for r in rows])
+        valid = ~np.isnan(x)
+        x, y = x[valid], y[valid]
+        n = len(x)
+        pr, pp = pearsonr(x, y) if n >= 3 else (np.nan, np.nan)
+        sr, sp = spearmanr(x, y) if n >= 3 else (np.nan, np.nan)
+        print(f"{key:>10s}  n={n}  Pearson r={pr:+.4f} (p={pp:.4f})  "
+              f"Spearman ρ={sr:+.4f} (p={sp:.4f})")
+
+    print("Correlation: boundary spread vs Δacc (CPFW - RF)")
+    _corr("maj_spread")
+    _corr("min_spread")
+    _corr("avg_spread")
+
+    # Spotlight datasets
+    print()
+    rows_sorted = sorted([r for r in rows if not np.isnan(r["avg_spread"])],
+                        key=lambda r: -r["avg_spread"])
+    print("Top 5 boundary spread:")
+    for r in rows_sorted[:5]:
+        print(f"  {r['dataset']:22s} avg_spread={r['avg_spread']:.4f}  Δacc={r['d_acc']:+.4f}")
+    print("Bottom 5 boundary spread:")
+    for r in rows_sorted[-5:]:
+        print(f"  {r['dataset']:22s} avg_spread={r['avg_spread']:.4f}  Δacc={r['d_acc']:+.4f}")
+
+
+if __name__ == "__main__":
+    run()

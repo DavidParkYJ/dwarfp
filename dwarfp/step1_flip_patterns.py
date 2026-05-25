@@ -6,7 +6,7 @@ decision paths have interpretable, diverse structure worth examining.
 
 This script:
   (a) Defines the 6 flip pattern types with examples
-  (b) Shows pattern frequency distribution across all 30 datasets
+  (b) Shows pattern frequency distribution across all working datasets
 
 No modelling — just path traversal on a fitted RF.
 """
@@ -21,11 +21,12 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedShuffleSplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from dwarfp.common import load, classify_pattern, walk_tree, PATTERNS, N_PAT, DATASETS
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "archive"))  # leaf_aware_rf
+from dwarfp.common import load, walk_tree_batch, PATTERNS, N_PAT, DATASETS
 
 warnings.filterwarnings("ignore")
 
-N_ESTIMATORS = 150
+N_ESTIMATORS = 300
 TEST_SIZE = 0.3
 SEED = 42
 
@@ -38,9 +39,10 @@ def _distribution(name):
                                 bootstrap=True, random_state=SEED,
                                 n_jobs=1).fit(X[tr], y[tr])
     counts = np.zeros(N_PAT, dtype=int)
+    Xte = X[te]
     for est in rf.estimators_:
-        for labels, _ in walk_tree(est, X[te]):
-            counts[classify_pattern(labels)] += 1
+        _, leaf_pat, _, _ = walk_tree_batch(est, Xte)
+        np.add.at(counts, leaf_pat, 1)
     return counts / counts.sum()
 
 
@@ -57,7 +59,7 @@ def run():
     for name, desc in defs:
         print(f"  {name:10s}  {desc}")
 
-    print("\n=== Pattern Distribution across 30 datasets (% of tree×point pairs) ===\n")
+    print(f"\n=== Pattern Distribution across {len(DATASETS)} datasets (% of tree×point pairs) ===\n")
     header = f'{"dataset":14s}' + ''.join(f'{p:>10s}' for p in PATTERNS)
     print(header)
     print("-" * len(header))

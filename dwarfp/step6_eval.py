@@ -20,7 +20,7 @@ Comparators (all share the same forest per split):
   KNORA-U — Ko et al. (2008), dynamic ensemble union (deslib)
 
 Eval contract:
-  Primary:   accuracy vs RF (Wilcoxon signed-rank, 30 datasets x 30 repeats)
+  Primary:   accuracy vs RF (Wilcoxon signed-rank, 36 datasets x 30 repeats)
   Secondary: minority recall and majority recall must not regress vs RF
 """
 
@@ -50,7 +50,7 @@ from deslib.des import KNORAU, KNORAE
 
 warnings.filterwarnings("ignore")
 
-N_ESTIMATORS = 150
+N_ESTIMATORS = 300
 REPEATS = 30
 TEST_SIZE = 0.3
 SEED = 42
@@ -62,8 +62,8 @@ N_CLS = 2
 
 
 def _bucket_fp(fp):
-    """10 buckets: [.5,.55)[.55,.6)...[.95,1.]  -> 0..9.  Scalar or array."""
-    return np.minimum(9, ((np.asarray(fp) - 0.5) / 0.05).astype(int))
+    """10 buckets over [0,1] of width 0.10 -> 0..9.  Scalar or array."""
+    return np.minimum(9, (np.asarray(fp) * 10).astype(int))
 
 
 def _collect_table(X_tr, y_tr, minority, seed):
@@ -88,7 +88,7 @@ def _collect_table(X_tr, y_tr, minority, seed):
             pred_idx = np.argmax(lv_mat, axis=1)
             pred_cls = classes[pred_idx]
 
-            fp  = forest_proba[np.arange(n_val), pred_idx]
+            fp  = forest_proba[np.arange(n_val), pred_idx]   # per-tree region
             pb  = _bucket_fp(fp)
             pat = leaf_pat[leaf_ids]
             ci  = (pred_cls == minority).astype(int)
@@ -131,7 +131,7 @@ def _weighted_predict(rf, Xte, minority, W):
         pred_idx = np.argmax(lv_mat, axis=1)
         pred_cls = classes[pred_idx]
 
-        fp = forest_proba[np.arange(n_te), pred_idx]
+        fp = forest_proba[np.arange(n_te), pred_idx]   # per-tree region
         pb = _bucket_fp(fp)
         pat = leaf_pat[leaf_ids]
         ci = (pred_cls == minority).astype(int)
@@ -335,16 +335,16 @@ def run(datasets=None):
         except ValueError:
             p = float("nan")
 
-        rmin_worse = int((d_rmin < -0.005).sum())
-        rmaj_worse = int((d_rmaj < -0.005).sum())
+        rmin_worse = int((d_rmin < -0.002).sum())
+        rmaj_worse = int((d_rmaj < -0.002).sum())
 
         print(f"\n{LABELS[m]} vs RF:")
         print(f"  acc   mean_d={d_acc.mean():+.4f}  "
               f"W={wins} T={ties} L={losses}  Wilcoxon p={p:.4f}")
         print(f"  minority recall  mean_d={d_rmin.mean():+.4f}  "
-              f"worse(>0.5pp)={rmin_worse}/{len(datasets)}")
+              f"worse(>0.2pp)={rmin_worse}/{len(datasets)}")
         print(f"  majority recall  mean_d={d_rmaj.mean():+.4f}  "
-              f"worse(>0.5pp)={rmaj_worse}/{len(datasets)}")
+              f"worse(>0.2pp)={rmaj_worse}/{len(datasets)}")
 
     # ── Size effect (CPFW only) ────────────────────────────────────────
     ns = np.array([len(load(name)[0]) for name in datasets])

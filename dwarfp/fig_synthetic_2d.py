@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 from sklearn.datasets import make_moons, make_circles
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
@@ -26,9 +27,27 @@ MIN_N = 20
 N_PAT = 6
 GRID_RES = 200
 
-PB_LABELS = ["[.50\n.60)", "[.60\n.70)", "[.70\n.80)", "[.80\n.90)", "[.90\n1.0]"]
+PB_LABELS = ["[.0\n.2)", "[.2\n.4)", "[.4\n.6)", "[.6\n.8)", "[.8\n1.]"]
 PAT_COLORS = ["#2ecc71", "#3498db", "#e74c3c", "#9b59b6", "#f39c12", "#95a5a6"]
-DATA_COLORS = ["#e74c3c", "#3498db"]
+# Scatter point colors: deep variants of the heatmap blue/green endpoints,
+# so class 0 dots blend into the blue heatmap region (darker) and class 1
+# dots into the green region (darker).
+DATA_COLORS = ["#0e3a8a", "#0a5f33"]    # deep blue (class 0), deep green (class 1)
+# Bar-chart borders + very-light facecolors to match predicted-class context
+BAR_BORDER_COLORS = ["#0e3a8a", "#0a5f33"]   # pred=Class 0 (blue), pred=Class 1 (green)
+BAR_FACE_COLORS   = ["#eaf0fb", "#eaf5ee"]   # very light blue / very light green
+
+# Heatmap colormap for P̂_RF[class 1] in [0,1] — light/pastel so points pop out:
+#   0 = light blue (class 0 region), 1 = light green (class 1 region),
+#   0.5 = light red (boundary), 0.25/0.75 = light yellow (intermediate).
+HEAT_CMAP = LinearSegmentedColormap.from_list(
+    "blue_yellow_red_yellow_green_light",
+    [(0.00, "#a8bce8"),   # light blue
+     (0.25, "#fbe89e"),   # light yellow
+     (0.50, "#e9a5a0"),   # light red
+     (0.75, "#fbe89e"),   # light yellow
+     (1.00, "#a8d4ba")],  # light green
+)
 
 
 # ── synthetic datasets ──────────────────────────────────────────────
@@ -62,7 +81,7 @@ SYNTH_DATASETS = [
 # ── helpers ─────────────────────────────────────────────────────────
 
 def _coarse_bucket(fp):
-    return np.minimum(4, ((fp - 0.5) / 0.10).astype(int))
+    return np.minimum(4, (fp * 5).astype(int))   # per-tree fp in [0,1], 0.20 wide
 
 
 def collect_records(X, y):
@@ -134,28 +153,23 @@ def plot_row(fig, gs, row_idx, name, X, y, acc, cnt, marg_acc):
                          np.linspace(y_min, y_max, GRID_RES))
     grid = np.c_[xx.ravel(), yy.ravel()]
     proba = rf.predict_proba(grid)
-    pred = np.argmax(proba, axis=1)
-    conf = proba[np.arange(len(grid)), pred].reshape(xx.shape)
+    p1 = proba[:, 1].reshape(xx.shape)   # P̂_RF[class 1] in [0,1]
 
-    im = ax_map.contourf(xx, yy, conf, levels=np.linspace(0.5, 1.0, 21),
-                         cmap="RdYlGn", alpha=0.80)
-    ax_map.contour(xx, yy, conf, levels=[0.5], colors="k", linewidths=1.5,
-                   linestyles="--")
-    for lev in [0.6, 0.7, 0.8, 0.9]:
-        ax_map.contour(xx, yy, conf, levels=[lev], colors="gray",
-                       linewidths=0.6, linestyles=":", alpha=0.5)
+    im = ax_map.contourf(xx, yy, p1, levels=np.linspace(0.0, 1.0, 41),
+                         cmap=HEAT_CMAP, alpha=0.70)
 
-    # data points — larger, clearer class labels
+    # data points — deep variants of the heatmap blue/green to stand out
     markers = ["o", "s"]
     for c in [0, 1]:
         m = y == c
-        ax_map.scatter(X[m, 0], X[m, 1], c=DATA_COLORS[c], s=12, alpha=0.5,
+        ax_map.scatter(X[m, 0], X[m, 1], c=DATA_COLORS[c], s=14, alpha=0.85,
                        edgecolors="white", linewidths=0.3, marker=markers[c],
                        label=f"Class {c}", zorder=3)
 
     ax_map.set_ylabel(f"{name}\n$x_2$", fontsize=10, fontweight="bold")
     if row_idx == 0:
-        ax_map.set_title("Forest confidence + class labels", fontsize=10)
+        ax_map.set_title(r"$\hat{P}_{\mathrm{RF}}[\mathrm{class}\,1]$"
+                         " + class labels", fontsize=10)
         ax_map.legend(loc="upper right", fontsize=7, markerscale=1.5,
                       framealpha=0.9)
     if row_idx == n_rows - 1:
@@ -166,6 +180,12 @@ def plot_row(fig, gs, row_idx, name, X, y, acc, cnt, marg_acc):
     ax_first_bar = None
     for ci in range(2):
         ax = fig.add_subplot(gs[row_idx, 1 + ci])
+        # Border + very-light background colored by predicted class:
+        #   Class 0 = blue, Class 1 = green
+        ax.set_facecolor(BAR_FACE_COLORS[ci])
+        for spine in ax.spines.values():
+            spine.set_edgecolor(BAR_BORDER_COLORS[ci])
+            spine.set_linewidth(2.0)
         if ci == 0:
             ax_first_bar = ax
         x_pos = np.arange(5)
@@ -233,8 +253,10 @@ def main():
 
     # colorbar at bottom of heatmap column
     cbar_ax = fig.add_axes([0.03, 0.01, 0.28, 0.010])
-    fig.colorbar(last_im, cax=cbar_ax, orientation="horizontal",
-                 label="Forest confidence")
+    cbar = fig.colorbar(last_im, cax=cbar_ax, orientation="horizontal",
+                        label=r"$\hat{P}_{\mathrm{RF}}[\mathrm{class}\,1]$"
+                              "  (0 = class 0,  0.5 = boundary,  1 = class 1)")
+    cbar.set_ticks([0.0, 0.25, 0.5, 0.75, 1.0])
 
     out_path = Path(__file__).resolve().parent.parent / "paper" / "fig_synthetic_2d.png"
     fig.savefig(out_path, dpi=200, bbox_inches="tight")

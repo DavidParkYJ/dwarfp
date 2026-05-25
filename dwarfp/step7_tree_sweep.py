@@ -1,7 +1,7 @@
-"""step7_tree_sweep.py — CPFW d_acc stability across N_ESTIMATORS.
+"""step7_tree_sweep.py — Proposed-vs-RF accuracy stability across N_ESTIMATORS.
 
-Uses the same vectorized leaf-pattern implementation as step6_eval:
-precompute_leaf_patterns + est.apply() for O(1) pattern lookup.
+Uses the shared vectorized CPFW core from `dwarfp.common`, identical to
+step6b and compare_baselines.
 
 Tree counts: [100, 150, 300, 500, 1000]
 """
@@ -15,12 +15,14 @@ from joblib import Parallel, delayed
 from scipy.stats import wilcoxon
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedShuffleSplit
 
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, str(Path(PROJECT_ROOT) / "archive"))
-from dwarfp.common import load, DATASETS, precompute_leaf_patterns
+from dwarfp.common import (load, DATASETS,
+                            cpfw_collect_table, cpfw_build_weight_table,
+                            cpfw_predict_proba)
 
 warnings.filterwarnings("ignore")
 
@@ -30,92 +32,6 @@ TEST_SIZE = 0.3
 SEED = 42
 N_CV = 5
 MIN_N = 30
-N_PROB = 10
-N_PAT = 6
-N_CLS = 2
-
-
-def _bucket_fp(fp):
-    return np.minimum(9, ((np.asarray(fp) - 0.5) / 0.05).astype(int))
-
-
-def _collect_table(X_tr, y_tr, minority, seed, n_est):
-    skf = StratifiedKFold(n_splits=N_CV, shuffle=True, random_state=seed)
-    R = np.zeros((N_PROB, N_PAT, N_CLS, 2))
-
-    for tr_idx, val_idx in skf.split(X_tr, y_tr):
-        rf = RandomForestClassifier(n_estimators=n_est, max_features="sqrt",
-                                    bootstrap=True, random_state=seed,
-                                    n_jobs=1).fit(X_tr[tr_idx], y_tr[tr_idx])
-        classes = rf.classes_
-        X_val, y_val = X_tr[val_idx], y_tr[val_idx]
-        n_val = len(val_idx)
-        forest_proba = rf.predict_proba(X_val)
-
-        for est in rf.estimators_:
-            leaf_pat = precompute_leaf_patterns(est)
-            leaf_ids = est.apply(X_val)
-            t = est.tree_
-
-            pat      = leaf_pat[leaf_ids]
-            lv_mat   = t.value[leaf_ids, 0, :]
-            pred_idx = np.argmax(lv_mat, axis=1)
-            pred_cls = classes[pred_idx]
-
-            fp  = forest_proba[np.arange(n_val), pred_idx]
-            pb  = _bucket_fp(fp)
-            ci  = (pred_cls == minority).astype(int)
-            cor = (pred_cls == y_val).astype(np.float64)
-
-            np.add.at(R[:, :, :, 0], (pb, pat, ci), cor)
-            np.add.at(R[:, :, :, 1], (pb, pat, ci), 1.0)
-
-    return R
-
-
-def _build_weight_table(R):
-    W = np.ones((N_PROB, N_PAT, N_CLS))
-    for pb in range(N_PROB):
-        for ci in range(N_CLS):
-            marg = R[pb, :, ci, :].sum(axis=0)
-            p_marg = marg[0] / marg[1] if marg[1] >= MIN_N else None
-            for pat in range(N_PAT):
-                v = R[pb, pat, ci]
-                if v[1] >= MIN_N and p_marg and p_marg > 0:
-                    W[pb, pat, ci] = (v[0] / v[1]) / p_marg
-    return W
-
-
-def _weighted_predict(rf, Xte, minority, W):
-    classes = rf.classes_
-    n_cls   = len(classes)
-    n_te    = len(Xte)
-    psum    = np.zeros((n_te, n_cls))
-    wsum    = np.zeros(n_te)
-
-    forest_proba = rf.predict_proba(Xte)
-
-    for est in rf.estimators_:
-        leaf_pat = precompute_leaf_patterns(est)
-        leaf_ids = est.apply(Xte)
-        t = est.tree_
-
-        pat      = leaf_pat[leaf_ids]
-        lv_mat   = t.value[leaf_ids, 0, :]
-        lv_norm  = lv_mat / lv_mat.sum(axis=1, keepdims=True)
-        pred_idx = np.argmax(lv_mat, axis=1)
-        pred_cls = classes[pred_idx]
-
-        fp = forest_proba[np.arange(n_te), pred_idx]
-        pb = _bucket_fp(fp)
-        ci = (pred_cls == minority).astype(int)
-
-        w = W[pb, pat, ci]
-        psum += w[:, np.newaxis] * lv_norm
-        wsum += w
-
-    safe = np.where(wsum > 0, wsum, 1.0)
-    return psum / safe[:, np.newaxis]
 
 
 def _run_one(name, rep, n_est):
@@ -133,9 +49,10 @@ def _run_one(name, rep, n_est):
 
     rf_acc = float(accuracy_score(yte, rf.predict(Xte)))
 
-    R  = _collect_table(Xtr, ytr, minority, SEED + rep, n_est)
-    W  = _build_weight_table(R)
-    wp = _weighted_predict(rf, Xte, minority, W)
+    R  = cpfw_collect_table(Xtr, ytr, minority, SEED + rep,
+                            n_estimators=n_est, n_cv=N_CV)
+    W  = cpfw_build_weight_table(R, min_n=MIN_N)
+    wp = cpfw_predict_proba(rf, Xte, minority, W)
     fw_acc = float(accuracy_score(yte, rf.classes_[np.argmax(wp, axis=1)]))
     return rf_acc, fw_acc
 

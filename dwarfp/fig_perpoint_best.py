@@ -143,7 +143,7 @@ def collect_per_sample(X, y):
 # ── plotting ─────────────────────────────────────────────────────────
 
 def main():
-    fig, axes = plt.subplots(2, 2, figsize=(12, 11))
+    fig, axes = plt.subplots(2, 2, figsize=(11, 9))
 
     for idx, (name, gen_fn) in enumerate(SYNTH_DATASETS):
         print(f"  {name}...", flush=True)
@@ -169,7 +169,7 @@ def main():
         ax.set_xlabel("$x_1$")
         ax.set_ylabel("$x_2$")
 
-    # Shared legend
+    # Shared legend on the right side
     pat_handles = [Line2D([0], [0], marker="o", color="w",
                           markerfacecolor=PAT_COLORS[p], markersize=8,
                           label=PATTERNS[p])
@@ -179,12 +179,12 @@ def main():
                             label=f"Class {c}")
                      for c, m in enumerate(["o", "s"])]
     fig.legend(handles=pat_handles + class_handles,
-               loc="lower center", ncol=5, fontsize=9,
-               title="Best pattern in (region, predicted class) cell",
-               title_fontsize=10, framealpha=0.95,
-               bbox_to_anchor=(0.5, -0.02))
+               loc="center right", ncol=1, fontsize=9,
+               title="Best pattern in\n(region, pred class) cell",
+               title_fontsize=9, framealpha=0.95,
+               bbox_to_anchor=(1.01, 0.5))
 
-    fig.tight_layout(rect=[0, 0.05, 1, 1])
+    fig.tight_layout(rect=[0, 0, 0.85, 1])
     out_path = (Path(__file__).resolve().parent.parent
                 / "paper" / "fig_perpoint_best.png")
     fig.savefig(out_path, dpi=200, bbox_inches="tight")

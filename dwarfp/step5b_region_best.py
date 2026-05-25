@@ -20,12 +20,12 @@ from sklearn.model_selection import StratifiedShuffleSplit
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, str(Path(PROJECT_ROOT) / "archive"))
-from dwarfp.common import (load, classify_pattern, walk_tree,
+from dwarfp.common import (load, walk_tree_batch,
                             PATTERNS, N_PAT, DATASETS)
 
 warnings.filterwarnings("ignore")
 
-N_ESTIMATORS = 150
+N_ESTIMATORS = 300
 REPEATS = 5
 TEST_SIZE = 0.3
 SEED = 42
@@ -34,12 +34,11 @@ MIN_N = 30
 DESIGN_DATASETS = DATASETS[:17]
 
 N_PROB = 5
-BUCK_LABELS = ["[.5,.6)", "[.6,.7)", "[.7,.8)", "[.8,.9)", "[.9,1.]"]
+BUCK_LABELS = ["[.0,.2)", "[.2,.4)", "[.4,.6)", "[.6,.8)", "[.8,1.]"]
 
 
 def _bucket_fp(fp):
-    fp = max(0.5, min(0.9999, fp))
-    return min(4, int((fp - 0.5) / 0.1))
+    return np.minimum(N_PROB - 1, (np.asarray(fp) * N_PROB).astype(int))
 
 
 def _accumulate(name, rep):
@@ -53,21 +52,19 @@ def _accumulate(name, rep):
     rf = RandomForestClassifier(n_estimators=N_ESTIMATORS, max_features="sqrt",
                                 bootstrap=True, random_state=SEED + rep,
                                 n_jobs=1).fit(Xtr, ytr)
-    classes = rf.classes_
+    n_te = len(Xte)
     forest_proba = rf.predict_proba(Xte)
 
     R = np.zeros((N_PROB, N_PAT, 2, 2))
     for est in rf.estimators_:
-        for i, (labels, lv) in enumerate(walk_tree(est, Xte)):
-            pred = classes[int(np.argmax(lv))]
-            c = 1.0 if pred == yte[i] else 0.0
-            ci = 1 if int(pred) == minority else 0
-            pred_idx = np.searchsorted(classes, pred)
-            fp = float(forest_proba[i, pred_idx])
-            pb = _bucket_fp(fp)
-            pat = classify_pattern(labels)
-            R[pb, pat, ci, 0] += c
-            R[pb, pat, ci, 1] += 1
+        _, leaf_pat, leaf_val, pred_cls = walk_tree_batch(est, Xte)
+        pred_idx = np.argmax(leaf_val, axis=1)
+        fp = forest_proba[np.arange(n_te), pred_idx]
+        pb = _bucket_fp(fp)
+        ci = (pred_cls == minority).astype(int)
+        cor = (pred_cls == yte).astype(np.float64)
+        np.add.at(R[:, :, :, 0], (pb, leaf_pat, ci), cor)
+        np.add.at(R[:, :, :, 1], (pb, leaf_pat, ci), 1.0)
     return R
 
 

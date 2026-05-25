@@ -27,11 +27,14 @@ from sklearn.metrics import accuracy_score
 from sklearn.model_selection import StratifiedShuffleSplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from dwarfp.common import load, recalls, classify_pattern, walk_tree, PATTERNS, N_PAT, DATASETS
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "archive"))  # leaf_aware_rf
+from dwarfp.common import (load, recalls, walk_tree_batch,
+                            precompute_leaf_flip_rate,
+                            PATTERNS, N_PAT, DATASETS)
 
 warnings.filterwarnings("ignore")
 
-N_ESTIMATORS = 150
+N_ESTIMATORS = 300
 REPEATS = 5
 TEST_SIZE = 0.3
 SEED = 42
@@ -51,27 +54,18 @@ def _accumulate_byclass(name, rep):
     rf = RandomForestClassifier(n_estimators=N_ESTIMATORS, max_features="sqrt",
                                 bootstrap=True, random_state=SEED + rep,
                                 n_jobs=1).fit(Xtr, ytr)
-    classes = rf.classes_
     # R[pat, ci, {sumc, n}]   ci=0 majority pred, ci=1 minority pred
     R = np.zeros((N_PAT, 2, 2))
     for est in rf.estimators_:
-        for (labels, lv), yi in zip(walk_tree(est, Xte), yte):
-            pred = classes[int(np.argmax(lv))]
-            c = 1.0 if pred == yi else 0.0
-            ci = 1 if int(pred) == minority else 0
-            R[classify_pattern(labels), ci, 0] += c
-            R[classify_pattern(labels), ci, 1] += 1
+        _, leaf_pat, _, pred_cls = walk_tree_batch(est, Xte)
+        ci = (pred_cls == minority).astype(int)
+        cor = (pred_cls == yte).astype(np.float64)
+        np.add.at(R[:, :, 0], (leaf_pat, ci), cor)
+        np.add.at(R[:, :, 1], (leaf_pat, ci), 1.0)
     return R
 
 
 # --- Part B helpers: naive weight = 1 - flip_rate ---
-
-def _flip_rate(labels):
-    if len(labels) <= 1:
-        return 0.0
-    flips = sum(1 for k in range(1, len(labels)) if labels[k] != labels[k - 1])
-    return flips / (len(labels) - 1)
-
 
 def _run_naive_weight(name, rep):
     X, y = load(name)
@@ -90,9 +84,12 @@ def _run_naive_weight(name, rep):
 
     out = np.zeros((len(Xte), n_cls))
     for est in rf.estimators_:
-        for i, (labels, lv) in enumerate(walk_tree(est, Xte)):
-            w = max(1e-6, 1.0 - _flip_rate(labels))
-            out[i] += w * (lv / lv.sum())
+        leaf_ids = est.apply(Xte)
+        flip_rate_tbl = precompute_leaf_flip_rate(est)
+        w = np.maximum(1e-6, 1.0 - flip_rate_tbl[leaf_ids])   # (n_te,)
+        lv = est.tree_.value[leaf_ids, 0, :]                   # (n_te, n_cls)
+        lv_norm = lv / lv.sum(axis=1, keepdims=True)
+        out += w[:, np.newaxis] * lv_norm
 
     rf_pred = rf.predict(Xte)
     rf_acc = float(accuracy_score(yte, rf_pred))

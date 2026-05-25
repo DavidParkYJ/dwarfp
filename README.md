@@ -12,8 +12,13 @@ experimental pipeline used to evaluate it.
 > paper's empirical results**. The paper text itself is not included.
 
 **Naming.** The method is called *Path-based Adaptive Weighting* in the paper.
-In the code it appears as `CPFW` (Conditional Path-Flip Weighting) — these
-refer to the same method.
+In the code it appears as `CPFW` (Conditional Path-Flip Weighting), which was
+the working-title acronym used during development. The paper-side name was
+finalised later, but the code identifier was kept to avoid the churn (and
+diff-noise) of renaming functions and CSV columns referenced from
+already-saved result files. The two names refer to the same method; everywhere
+the paper writes "the proposed method" or "Path-based Adaptive Weighting,"
+the corresponding code symbol is `cpfw_*`.
 
 ## Layout
 

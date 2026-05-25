@@ -5,6 +5,23 @@
 
 # Exploratory / superseded work — not part of paper verification
 archive/
+dwarfp/exp_*.py
+dwarfp/explore_*.py
+dwarfp/check_*.py
+dwarfp/results_amp_*.csv
+dwarfp/results_bestpattern.csv
+dwarfp/results_boot_*.csv
+dwarfp/results_dt_*.csv
+dwarfp/results_gating.csv
+dwarfp/results_hard_*.csv
+dwarfp/results_minn_*.csv
+dwarfp/results_path_dt*.csv
+dwarfp/results_region_binning*.csv
+dwarfp/results_region_fine.csv
+dwarfp/results_region_persample.csv
+dwarfp/results_step6.csv
+dwarfp/results_t3000_*.csv
+dwarfp/results_weight_*.csv
 
 # Paper sources & build artifacts (not published in this repo)
 paper/

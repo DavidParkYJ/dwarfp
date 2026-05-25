@@ -16,12 +16,14 @@ from joblib import Parallel, delayed
 from scipy.stats import wilcoxon
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedShuffleSplit
 
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, str(Path(PROJECT_ROOT) / "archive"))
-from dwarfp.common import load, recalls, classify_pattern, walk_tree, DATASETS
+from dwarfp.common import (load, recalls, DATASETS,
+                            cpfw_collect_table, cpfw_build_weight_table,
+                            cpfw_predict_proba)
 
 # DES imports — deslib 0.3.7 calls _validate_data which was removed in
 # sklearn >=1.6.  Patch BaseDS to use sklearn.utils.validation instead.
@@ -33,89 +35,12 @@ from deslib.des import KNORAU, KNORAE
 
 warnings.filterwarnings("ignore")
 
-N_ESTIMATORS = 150
+N_ESTIMATORS = 300
 REPEATS = 30
 TEST_SIZE = 0.3
 SEED = 42
 N_CV = 5
 MIN_N = 30
-N_PROB = 10
-N_PAT = 6
-N_CLS = 2
-
-
-# ── CPFW helpers (from step6_eval.py) ─────────────────────────────────
-
-def _bucket_fp(fp):
-    return min(9, int((fp - 0.5) / 0.05))
-
-
-def _collect_table(X_tr, y_tr, minority, seed):
-    skf = StratifiedKFold(n_splits=N_CV, shuffle=True, random_state=seed)
-    R = np.zeros((N_PROB, N_PAT, N_CLS, 2))
-    for tr_idx, val_idx in skf.split(X_tr, y_tr):
-        rf = RandomForestClassifier(n_estimators=N_ESTIMATORS,
-                                    max_features="sqrt", bootstrap=True,
-                                    random_state=seed, n_jobs=1
-                                    ).fit(X_tr[tr_idx], y_tr[tr_idx])
-        classes = rf.classes_
-        forest_proba = rf.predict_proba(X_tr[val_idx])
-        for est in rf.estimators_:
-            for j, (labels, lv) in enumerate(walk_tree(est, X_tr[val_idx])):
-                pred = classes[int(np.argmax(lv))]
-                c = 1.0 if pred == y_tr[val_idx[j]] else 0.0
-                ci = 1 if int(pred) == minority else 0
-                pred_idx = np.searchsorted(classes, pred)
-                fp = float(forest_proba[j, pred_idx])
-                R[_bucket_fp(fp), classify_pattern(labels), ci, 0] += c
-                R[_bucket_fp(fp), classify_pattern(labels), ci, 1] += 1
-    return R
-
-
-def _build_weight_table(R):
-    W = np.ones((N_PROB, N_PAT, N_CLS))
-    for pb in range(N_PROB):
-        for ci in range(N_CLS):
-            marg = R[pb, :, ci, :].sum(axis=0)
-            p_marg = marg[0] / marg[1] if marg[1] >= MIN_N else None
-            for pat in range(N_PAT):
-                v = R[pb, pat, ci]
-                if v[1] >= MIN_N and p_marg and p_marg > 0:
-                    W[pb, pat, ci] = (v[0] / v[1]) / p_marg
-    return W
-
-
-def _weighted_predict(rf, Xte, minority, W):
-    classes = rf.classes_
-    n_cls = len(classes)
-    out = np.zeros((len(Xte), n_cls))
-    forest_proba = rf.predict_proba(Xte)
-    tree_data = []
-    for est in rf.estimators_:
-        t = est.tree_
-        tree_data.append((t.children_left, t.children_right,
-                          np.argmax(t.value[:, 0, :], axis=1),
-                          t.feature, t.threshold, t.value))
-    for i in range(len(Xte)):
-        xi = Xte[i]
-        psum = np.zeros(n_cls)
-        wsum = 0.0
-        for (cl, cr, nlab, feat, thr, val) in tree_data:
-            node = 0
-            labels = [int(nlab[node])]
-            while cl[node] != cr[node]:
-                node = cl[node] if xi[feat[node]] <= thr[node] else cr[node]
-                labels.append(int(nlab[node]))
-            lv = val[node, 0, :]
-            pred = classes[int(np.argmax(lv))]
-            ci = 1 if int(pred) == minority else 0
-            pred_idx = np.searchsorted(classes, pred)
-            fp = float(forest_proba[i, pred_idx])
-            w = float(W[_bucket_fp(fp), classify_pattern(labels), ci])
-            psum += w * (lv / lv.sum())
-            wsum += w
-        out[i] = psum / wsum if wsum > 0 else np.ones(n_cls) / n_cls
-    return out
 
 
 # ── WRF (Winham 2013) ───────────────────────────────────────────────
@@ -189,10 +114,11 @@ def _run_one(name, rep):
     rf_acc = float(accuracy_score(yte, rf_pred))
     rf_rmin, rf_rmaj = recalls(yte, rf_pred, minority, majority)
 
-    # 2) CPFW
-    R = _collect_table(Xtr, ytr, minority, SEED + rep)
-    W = _build_weight_table(R)
-    wp = _weighted_predict(rf, Xte, minority, W)
+    # 2) CPFW (shared vectorized impl from common; identical to step6b)
+    R = cpfw_collect_table(Xtr, ytr, minority, SEED + rep,
+                           n_estimators=N_ESTIMATORS, n_cv=N_CV)
+    W = cpfw_build_weight_table(R, min_n=MIN_N)
+    wp = cpfw_predict_proba(rf, Xte, minority, W)
     cpfw_pred = rf.classes_[np.argmax(wp, axis=1)]
     cpfw_acc = float(accuracy_score(yte, cpfw_pred))
     cpfw_rmin, cpfw_rmaj = recalls(yte, cpfw_pred, minority, majority)
@@ -283,6 +209,25 @@ def run(datasets=None):
 
         print(row)
 
+    # ── Persist per-dataset acc/rmin/rmaj ──────────────────────────────
+    import csv as _csv
+    out_path = Path(__file__).resolve().parent / "results_baselines.csv"
+    fieldnames = ["dataset", "n"]
+    for m in METHODS:
+        fieldnames += [f"{LABELS[m]}_acc", f"{LABELS[m]}_rmin", f"{LABELS[m]}_rmaj"]
+    with open(out_path, "w", newline="") as fcsv:
+        w = _csv.DictWriter(fcsv, fieldnames=fieldnames)
+        w.writeheader()
+        for i, name in enumerate(datasets):
+            X, _ = load(name)
+            row = {"dataset": name, "n": len(X)}
+            for m in METHODS:
+                row[f"{LABELS[m]}_acc"]  = f"{all_res[m]['acc'][i]:.4f}"
+                row[f"{LABELS[m]}_rmin"] = f"{all_res[m]['rmin'][i]:.4f}"
+                row[f"{LABELS[m]}_rmaj"] = f"{all_res[m]['rmaj'][i]:.4f}"
+            w.writerow(row)
+    print(f"\nSaved: {out_path}")
+
     # ── Summary ────────────────────────────────────────────────────────
     print("\n" + "=" * 70)
     print("SUMMARY vs RF")
@@ -312,16 +257,16 @@ def run(datasets=None):
         except ValueError:
             p = float("nan")
 
-        rmin_worse = int((d_rmin < -0.005).sum())
-        rmaj_worse = int((d_rmaj < -0.005).sum())
+        rmin_worse = int((d_rmin < -0.002).sum())
+        rmaj_worse = int((d_rmaj < -0.002).sum())
 
         print(f"\n{LABELS[m]} vs RF:")
         print(f"  acc   mean_d={d_acc.mean():+.4f}  "
               f"W={wins} T={ties} L={losses}  Wilcoxon p={p:.4f}")
         print(f"  minority recall  mean_d={d_rmin.mean():+.4f}  "
-              f"worse(>0.5pp)={rmin_worse}/{len(datasets)}")
+              f"worse(>0.2pp)={rmin_worse}/{len(datasets)}")
         print(f"  majority recall  mean_d={d_rmaj.mean():+.4f}  "
-              f"worse(>0.5pp)={rmaj_worse}/{len(datasets)}")
+              f"worse(>0.2pp)={rmaj_worse}/{len(datasets)}")
 
 
 if __name__ == "__main__":

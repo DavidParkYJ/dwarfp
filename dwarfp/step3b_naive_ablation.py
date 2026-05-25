@@ -21,21 +21,14 @@ from sklearn.model_selection import StratifiedShuffleSplit
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, str(Path(PROJECT_ROOT) / "archive"))
-from dwarfp.common import load, recalls, walk_tree, DATASETS
+from dwarfp.common import load, recalls, precompute_leaf_flip_rate, DATASETS
 
 warnings.filterwarnings("ignore")
 
-N_ESTIMATORS = 150
+N_ESTIMATORS = 300
 REPEATS = 30
 TEST_SIZE = 0.3
 SEED = 42
-
-
-def _flip_rate(labels):
-    if len(labels) <= 1:
-        return 0.0
-    flips = sum(1 for k in range(1, len(labels)) if labels[k] != labels[k - 1])
-    return flips / (len(labels) - 1)
 
 
 def _run_one(name, rep):
@@ -53,12 +46,15 @@ def _run_one(name, rep):
     classes = rf.classes_
     n_cls = len(classes)
 
-    # Naive weighted prediction
+    # Naive weighted prediction (vectorized via precomputed per-leaf flip rate)
     out = np.zeros((len(Xte), n_cls))
     for est in rf.estimators_:
-        for i, (labels, lv) in enumerate(walk_tree(est, Xte)):
-            w = max(1e-6, 1.0 - _flip_rate(labels))
-            out[i] += w * (lv / lv.sum())
+        leaf_ids = est.apply(Xte)
+        flip_rate_tbl = precompute_leaf_flip_rate(est)
+        w = np.maximum(1e-6, 1.0 - flip_rate_tbl[leaf_ids])
+        lv = est.tree_.value[leaf_ids, 0, :]
+        lv_norm = lv / lv.sum(axis=1, keepdims=True)
+        out += w[:, np.newaxis] * lv_norm
 
     rf_pred = rf.predict(Xte)
     rf_acc = float(accuracy_score(yte, rf_pred))
@@ -131,13 +127,13 @@ def run():
     except ValueError:
         p = float("nan")
 
-    rmin_worse = int((d_rmin < -0.005).sum())
-    rmaj_worse = int((d_rmaj < -0.005).sum())
+    rmin_worse = int((d_rmin < -0.002).sum())
+    rmaj_worse = int((d_rmaj < -0.002).sum())
 
     print(f'\n=== SUMMARY: Naive weighting vs RF ===')
     print(f'  acc   mean_d={d_acc.mean():+.4f}  W={wins} T={ties} L={losses}  p={p:.4f}')
-    print(f'  r_min mean_d={d_rmin.mean():+.4f}  worse(>0.5pp)={rmin_worse}/{len(DATASETS)}')
-    print(f'  r_maj mean_d={d_rmaj.mean():+.4f}  worse(>0.5pp)={rmaj_worse}/{len(DATASETS)}')
+    print(f'  r_min mean_d={d_rmin.mean():+.4f}  worse(>0.2pp)={rmin_worse}/{len(DATASETS)}')
+    print(f'  r_maj mean_d={d_rmaj.mean():+.4f}  worse(>0.2pp)={rmaj_worse}/{len(DATASETS)}')
 
 
 if __name__ == "__main__":

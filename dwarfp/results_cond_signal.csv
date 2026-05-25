@@ -1,0 +1,11 @@
+region,tree_cls,spread,best,worst,marg_acc,n
+"[.0,.2)",maj,0.03001,oscillat,early_sw,0.06777,344133
+"[.0,.2)",min,0.07088,late_sw,noflip,0.09100,1105750
+"[.2,.4)",maj,0.13333,oscillat,other,0.24631,812053
+"[.2,.4)",min,0.08228,other,noflip,0.25090,1559798
+"[.4,.6)",maj,0.23365,noflip,late_sw,0.50198,1608688
+"[.4,.6)",min,0.20077,noflip,late_sw,0.51375,1573170
+"[.6,.8)",maj,0.10102,other,oscillat,0.76505,3904282
+"[.6,.8)",min,0.11889,noflip,oscillat,0.76973,1908947
+"[.8,1.]",maj,0.04751,other,oscillat,0.95814,19925872
+"[.8,1.]",min,0.02268,recover,oscillat,0.96332,4685307
