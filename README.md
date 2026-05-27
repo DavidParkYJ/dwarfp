@@ -2,6 +2,7 @@
 
 Reproduction code for the paper *"Decision-Path Patterns as Tree Reliability
 Signals: Path-based Adaptive Weighting for Random Forest Classification."*
+https://arxiv.org/abs/2605.20716
 
 Near the decision boundary, the sequence of majority-class labels along a
 tree's root-to-leaf path (its **flip pattern**) carries reliability signal not
