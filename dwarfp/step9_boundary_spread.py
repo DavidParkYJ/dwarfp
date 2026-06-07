@@ -161,7 +161,7 @@ def run():
         print(f"{key:>10s}  n={n}  Pearson r={pr:+.4f} (p={pp:.4f})  "
               f"Spearman ρ={sr:+.4f} (p={sp:.4f})")
 
-    print("Correlation: boundary spread vs Δacc (Proposed − RF)")
+    print("Correlation: boundary spread vs Δacc (CPFW − RF)")
     _corr("maj_spread")
     _corr("min_spread")
     _corr("avg_spread")

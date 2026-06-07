@@ -93,7 +93,7 @@ def run():
 
     x = np.array([r["share_46"] for r in rows])
     y = np.array([r["d_acc"] for r in rows])
-    print(f"\nCorrelation: fp[.4,.6) sample share vs Δacc (Proposed − RF) on {len(rows)} datasets")
+    print(f"\nCorrelation: fp[.4,.6) sample share vs Δacc (CPFW − RF) on {len(rows)} datasets")
     pr, pp = pearsonr(x, y)
     sr, sp = spearmanr(x, y)
     print(f"  Pearson r = {pr:+.4f}  (p={pp:.4f})")

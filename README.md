@@ -13,13 +13,21 @@ experimental pipeline used to evaluate it.
 > paper's empirical results**. The paper text itself is not included.
 
 **Naming.** The method is called *Path-based Adaptive Weighting* in the paper.
-In the code it appears as `CPFW` (Conditional Path-Flip Weighting), which was
-the working-title acronym used during development. The paper-side name was
-finalised later, but the code identifier was kept to avoid the churn (and
-diff-noise) of renaming functions and CSV columns referenced from
-already-saved result files. The two names refer to the same method; everywhere
-the paper writes "the proposed method" or "Path-based Adaptive Weighting,"
-the corresponding code symbol is `cpfw_*`.
+In the code it appears as `CPFW` (Conditional Path-Flip Weighting), the
+working-title acronym used during development. The two names refer to the same
+method: everywhere the paper writes "the proposed method" or "Path-based
+Adaptive Weighting," the corresponding code identifier is `CPFW`. The code
+identifier was kept (for now) to avoid the churn and diff-noise of renaming
+functions and the CSV columns referenced from already-saved result files.
+
+`CPFW` is the single, consistent reference token for the method across the
+reproduction pipeline — symbols (`cpfw_*`, `CPFW_N_PROB`/`CPFW_N_CLS`), the
+`CPFW_*` / `d_CPFW_*` columns of `results_baselines.csv`, and the `"CPFW"`
+display label. A future rename to the final paper name is therefore a single
+case-insensitive replace of `cpfw`/`CPFW`, plus regenerating `results_baselines.csv`
+so its column headers follow (the cell values are unchanged). The exploratory
+`exp_*.py` scripts still use the older `FW` / `Proposed` aliases for the method
+and would be folded into that same rename.
 
 ## Layout
 

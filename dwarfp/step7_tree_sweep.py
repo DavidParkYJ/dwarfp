@@ -1,4 +1,4 @@
-"""step7_tree_sweep.py — Proposed-vs-RF accuracy stability across N_ESTIMATORS.
+"""step7_tree_sweep.py — CPFW-vs-RF accuracy stability across N_ESTIMATORS.
 
 Uses the shared vectorized CPFW core from `dwarfp.common`, identical to
 step6b and compare_baselines.
@@ -53,37 +53,37 @@ def _run_one(name, rep, n_est):
                             n_estimators=n_est, n_cv=N_CV)
     W  = cpfw_build_weight_table(R, min_n=MIN_N)
     wp = cpfw_predict_proba(rf, Xte, minority, W)
-    fw_acc = float(accuracy_score(yte, rf.classes_[np.argmax(wp, axis=1)]))
-    return rf_acc, fw_acc
+    cpfw_acc = float(accuracy_score(yte, rf.classes_[np.argmax(wp, axis=1)]))
+    return rf_acc, cpfw_acc
 
 
 def run():
     datasets = DATASETS
     n_ds = len(datasets)
 
-    hdr = f"{'trees':>6}  {'RF_acc':>7}  {'FW_acc':>7}  {'d_acc':>8}  {'wins':>5}  {'p':>7}"
+    hdr = f"{'trees':>6}  {'RF_acc':>7}  {'CPFW_acc':>8}  {'d_acc':>8}  {'wins':>5}  {'p':>7}"
     print(f"Tree sweep: {TREE_COUNTS}  repeats={REPEATS}  datasets={n_ds}\n")
     print(hdr)
     print("-" * len(hdr))
 
     for n_est in TREE_COUNTS:
         print(f"  running n_estimators={n_est}...", flush=True)
-        rf_accs, fw_accs = [], []
+        rf_accs, cpfw_accs = [], []
         for name in datasets:
             res = Parallel(n_jobs=-1, prefer="processes")(
                 delayed(_run_one)(name, r, n_est) for r in range(REPEATS))
             rf_accs.append(float(np.mean([r[0] for r in res])))
-            fw_accs.append(float(np.mean([r[1] for r in res])))
+            cpfw_accs.append(float(np.mean([r[1] for r in res])))
 
         rf_accs = np.array(rf_accs)
-        fw_accs = np.array(fw_accs)
-        d = fw_accs - rf_accs
+        cpfw_accs = np.array(cpfw_accs)
+        d = cpfw_accs - rf_accs
         wins = int((d > 1e-9).sum())
         try:
-            p = wilcoxon(fw_accs, rf_accs).pvalue
+            p = wilcoxon(cpfw_accs, rf_accs).pvalue
         except ValueError:
             p = float("nan")
-        print(f"{n_est:>6}  {rf_accs.mean():7.4f}  {fw_accs.mean():7.4f}  "
+        print(f"{n_est:>6}  {rf_accs.mean():7.4f}  {cpfw_accs.mean():8.4f}  "
               f"{d.mean():+8.4f}  {wins:>3}/{n_ds}  {p:7.4f}", flush=True)
 
 

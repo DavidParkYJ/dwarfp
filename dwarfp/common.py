@@ -242,6 +242,14 @@ def walk_tree_batch(estimator, X):
 
 
 # ── CPFW core (vectorized, shared by step6b and compare_baselines) ───
+#
+# NAMING ANCHOR: `CPFW` (Conditional Path-Flip Weighting) is the working-title
+# acronym for the paper's proposed method, "Path-based Adaptive Weighting".
+# Wherever the code says CPFW / cpfw_* / CPFW_* — symbols, the CPFW_* CSV
+# columns, the "CPFW" display label — it means that one method. This is the
+# single reference point: a future rename can replace the `cpfw`/`CPFW` token
+# (case-insensitive) in one sweep (see README "Naming"). Read the code keying
+# on CPFW.
 from sklearn.ensemble import RandomForestClassifier as _RFC
 from sklearn.model_selection import StratifiedKFold as _SKF
 
