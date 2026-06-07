@@ -1,10 +1,16 @@
-"""compare_baselines.py — CPFW vs RF vs WRF(Winham) vs KNORA-E vs KNORA-U.
+"""compare_baselines.py — headline evaluation engine.
 
-Same split / same forest where possible.
-Reports: accuracy, minority recall, majority recall per dataset.
-Wilcoxon signed-rank for each method vs RF.
+CPFW (proposed) vs RF vs WRF(Winham) vs KNORA-E vs KNORA-U, same split / same
+forest per repeat. Reports accuracy, minority recall, majority recall per
+dataset and the Wilcoxon signed-rank test for each method vs RF; writes the
+canonical results_baselines.csv (with full-precision d_*_acc columns consumed
+by step8/step9/step11).
 
-NOTE: This is a decision-support script, not paper code.
+This module is the engine behind the managed entry point `step6_eval`; the
+CPFW core itself lives in `dwarfp.common` (cpfw_collect_table /
+cpfw_build_weight_table / cpfw_predict_proba). Run via:
+    python -m dwarfp.step6_eval     # canonical
+    python -c "from dwarfp import compare_baselines as cb; cb.run()"  # equivalent
 """
 
 import sys

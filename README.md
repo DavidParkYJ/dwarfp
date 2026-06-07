@@ -25,14 +25,26 @@ the corresponding code symbol is `cpfw_*`.
 
 ```
 dwarfp/                      method + experiment code
-  common.py                  dataset loading, pattern classification, tree walk
-  compare_baselines.py       main evaluation: RF vs Proposed vs WRF vs KNORA-E/U
-  step1_flip_patterns.py     pattern distribution           (Table 2)
-  step2_pattern_accuracy.py  pooled pattern accuracy         (Table 3)
-  step3_class_confound.py    class confound diagnostic       (Table 4)
-  step5_conditional_signal.py within-cell conditional signal (Table 5)
-  step6_eval.py              full evaluation (same as compare_baselines)
-  step7_tree_sweep.py        tree-count robustness           (Table 11)
+  common.py                  dataset loading, pattern classification, tree walk,
+                             CPFW core (cpfw_collect_table/_build/_predict)
+  step1_flip_patterns.py     pattern distribution           (tab:pattern-dist)
+  step2_pattern_accuracy.py  pooled pattern accuracy         (tab:raw-acc)
+  step3_class_confound.py    class confound diagnostic       (tab:confound)
+  step3b_naive_ablation.py   naive vs class-conditional      (tab:naive-ablation)
+  step5_conditional_signal.py within-cell signal + region    (tab:cond-signal, tab:region-pat)
+  step5b_region_best.py      best pattern per region         (tab:region-best, -full)
+  step6_eval.py              canonical headline entry: RF vs Proposed vs WRF vs
+                             KNORA-E/U   (tab:aggregate, tab:ood, tab:results)
+  compare_baselines.py       engine behind step6_eval (same numbers); writes
+                             the canonical results_baselines.csv
+  step6b_size_effect.py      accuracy gain by dataset size   (tab:size, tab:size-full)
+  step7_tree_sweep.py        tree-count robustness           (tab:trees)
+  step8_boundary_mass.py     boundary mass M (OOB)           (tab:mass-spread-full, col M)
+  step9_boundary_spread.py   boundary spread S (OOB)         (tab:mass-spread-full, col S)
+  step10_weight_amplification.py CV-honest K* amplification  (tab:amp-sweep-full)
+  step11_mass_spread.py      M*S product, quintiles, Pearson r, amplification-by-quintile
+                             (tab:mass-spread, tab:mass-spread-full; the
+                             bottom-quintile K*=0 share = 212/240 = 88%)
   fig_synthetic_2d.py        synthetic 2D visualisation      (Figure 1)
   eval_magnitude.py          effect-size helper
   download_datasets.py       (re)builds data_cache/ from UCI/OpenML
@@ -58,21 +70,41 @@ Run from the repository root (scripts resolve `data_cache/` relative to it).
 Datasets are bundled, so no download is required.
 
 ```bash
-# Main results — Tables 7-10  (30 datasets x 30 repeats x 5 methods, ~12 min / 20 cores)
-python -c "from dwarfp import compare_baselines as cb; cb.run()"
+# Main results — aggregate / OOD / full per-dataset tables
+#   (30 datasets x 30 repeats x 5 methods, ~12 min / 20 cores)
+#   Writes results_baselines.csv, consumed by step8/step9/step11 below.
+python -m dwarfp.step6_eval
+#   equivalent: python -c "from dwarfp import compare_baselines as cb; cb.run()"
 
-# Tree-count robustness — Table 11
-python -m dwarfp.step7_tree_sweep
+# Diagnostics — pattern distribution / accuracy / confound / conditional signal
+python -m dwarfp.step1_flip_patterns         # tab:pattern-dist
+python -m dwarfp.step2_pattern_accuracy      # tab:raw-acc
+python -m dwarfp.step3_class_confound        # tab:confound
+python -m dwarfp.step3b_naive_ablation       # tab:naive-ablation
+python -m dwarfp.step5_conditional_signal    # tab:cond-signal, tab:region-pat
+python -m dwarfp.step5b_region_best          # tab:region-best, tab:region-best-full
 
-# Diagnostics — Tables 2-5
-python -m dwarfp.step1_flip_patterns
-python -m dwarfp.step2_pattern_accuracy
-python -m dwarfp.step3_class_confound
-python -m dwarfp.step5_conditional_signal
+# Robustness — tree count and dataset size
+python -m dwarfp.step7_tree_sweep            # tab:trees
+python -m dwarfp.step6b_size_effect          # tab:size, tab:size-full
+
+# Applicability indicator (M*S) and weight amplification.
+#   step8/step9 read results_baselines.csv; step11 reads step8/step9/step10 output,
+#   so run them in this order.
+python -m dwarfp.step8_boundary_mass         # boundary mass M  -> results_fp_share.csv
+python -m dwarfp.step9_boundary_spread       # boundary spread S -> results_boundary_spread.csv
+python -m dwarfp.step10_weight_amplification # tab:amp-sweep-full -> results_weight_amplification.csv
+python -m dwarfp.step11_mass_spread          # tab:mass-spread, tab:mass-spread-full, Pearson r
 
 # Synthetic 2D figure — Figure 1
 python -m dwarfp.fig_synthetic_2d
 ```
+
+Every paper table maps to a `stepN` script; see the layout above for the
+table-to-script mapping. `step11` reads the CSVs written by `step6_eval`,
+`step8`, and `step9`, so run those first; for the amplification-by-quintile
+figures it uses `step10`'s output when present and otherwise falls back to the
+tracked `results_alpha_ms_cv.csv`, so it reproduces from a clean clone.
 
 All methods share the same train/test split and the same trained forest within
 each repeat (seed = `42 + repeat`); the proposed method's weight table is
