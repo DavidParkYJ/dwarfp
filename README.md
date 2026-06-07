@@ -1,4 +1,4 @@
-# dwarfp — Decision-Path Flip-Pattern Weighting for Random Forests
+# dwarfp — Path-based Adaptive Weighting for Random Forests
 
 Reproduction code for the paper *"Decision-Path Patterns as Tree Reliability
 Signals: Path-based Adaptive Weighting for Random Forest Classification."*
@@ -41,7 +41,7 @@ dwarfp/                      method + experiment code
   step3b_naive_ablation.py   naive vs class-conditional      (tab:naive-ablation)
   step5_conditional_signal.py within-cell signal + region    (tab:cond-signal, tab:region-pat)
   step5b_region_best.py      best pattern per region         (tab:region-best, -full)
-  step6_eval.py              canonical headline entry: RF vs Proposed vs WRF vs
+  step6_eval.py              canonical headline entry: RF vs CPFW vs WRF vs
                              KNORA-E/U   (tab:aggregate, tab:ood, tab:results)
   compare_baselines.py       engine behind step6_eval (same numbers); writes
                              the canonical results_baselines.csv
@@ -56,7 +56,7 @@ dwarfp/                      method + experiment code
   fig_synthetic_2d.py        synthetic 2D visualisation      (Figure 1)
   eval_magnitude.py          effect-size helper
   download_datasets.py       (re)builds data_cache/ from UCI/OpenML
-data_cache/                  preprocessed datasets (.pkl): the 30 used in the
+data_cache/                  preprocessed datasets (.pkl): the 36 used in the
                              paper plus 7 extra bundled but excluded from the
                              published evaluation (see dwarfp/common.py DATASETS)
 requirements.txt
@@ -79,7 +79,7 @@ Datasets are bundled, so no download is required.
 
 ```bash
 # Main results — aggregate / OOD / full per-dataset tables
-#   (30 datasets x 30 repeats x 5 methods, ~12 min / 20 cores)
+#   (36 datasets x 30 repeats x 5 methods, ~12 min / 20 cores)
 #   Writes results_baselines.csv, consumed by step8/step9/step11 below.
 python -m dwarfp.step6_eval
 #   equivalent: python -c "from dwarfp import compare_baselines as cb; cb.run()"
@@ -97,8 +97,8 @@ python -m dwarfp.step7_tree_sweep            # tab:trees
 python -m dwarfp.step6b_size_effect          # tab:size, tab:size-full
 
 # Applicability indicator (M*S) and weight amplification.
-#   step8/step9 read results_baselines.csv; step11 reads step8/step9/step10 output,
-#   so run them in this order.
+#   step8/step9 read results_baselines.csv; step11 reads step8/step9 output
+#   (and step10's when present), so run them in this order.
 python -m dwarfp.step8_boundary_mass         # boundary mass M  -> results_fp_share.csv
 python -m dwarfp.step9_boundary_spread       # boundary spread S -> results_boundary_spread.csv
 python -m dwarfp.step10_weight_amplification # tab:amp-sweep-full -> results_weight_amplification.csv
